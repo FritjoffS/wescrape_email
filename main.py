@@ -6,12 +6,29 @@ import concurrent.futures
 
 session = HTMLSession()
 
+def is_login_page(url, soup):
+    login_keywords = ['login', 'signin', 'logon', 'auth', 'account', 'user', 'password']
+    url_lower = url.lower()
+    if any(keyword in url_lower for keyword in login_keywords):
+        return True
+
+    title = soup.title.string if soup.title else ''
+    if any(keyword in title.lower() for keyword in login_keywords):
+        return True
+
+    for form in soup.find_all('form', action=True):
+        action = form['action'].lower()
+        if any(keyword in action for keyword in login_keywords):
+            return True
+
+    return False
+
 def scrape_page(url, depth=0, max_depth=2, visited=None):
     if visited is None:
         visited = set()
     
     if depth > max_depth or url in visited:
-        return set()
+        return set(), set()
 
     print(f"Scraping page: {url} (Depth: {depth})")
     visited.add(url)
@@ -21,15 +38,21 @@ def scrape_page(url, depth=0, max_depth=2, visited=None):
         response.html.render(timeout=30, sleep=1)
     except Exception as e:
         print(f"Error rendering JavaScript for {url}: {e}")
-        return set()
+        return set(), set()
 
     soup = BeautifulSoup(response.html.html, "html.parser")
     emails = set()
     links = set()
+    login_pages = set()
 
     # Find emails
     email_pattern = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
     emails.update(set(re.findall(email_pattern, soup.get_text())))
+
+    # Check if the current page is a login page
+    if is_login_page(url, soup):
+        login_pages.add(url)
+        print(f"Found login page: {url}")
 
     # Find links
     for a_tag in soup.find_all("a", href=True):
@@ -43,15 +66,18 @@ def scrape_page(url, depth=0, max_depth=2, visited=None):
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_url = {executor.submit(scrape_page, link, depth + 1, max_depth, visited): link for link in links}
         for future in concurrent.futures.as_completed(future_to_url):
-            emails.update(future.result())
+            sub_emails, sub_login_pages = future.result()
+            emails.update(sub_emails)
+            login_pages.update(sub_login_pages)
 
-    return emails
+    return emails, login_pages
 
-def scrape_email_from_website(url, max_depth=2):
-    print(f"Starting email scraping from: {url}")
-    emails = scrape_page(url, max_depth=max_depth)
+def scrape_email_and_login_from_website(url, max_depth=2):
+    print(f"Starting email and login page scraping from: {url}")
+    emails, login_pages = scrape_page(url, max_depth=max_depth)
     print(f"Total unique emails found: {len(emails)}")
-    return list(emails)
+    print(f"Total unique login pages found: {len(login_pages)}")
+    return list(emails), list(login_pages)
 
 def print_emails(emails):
     if not emails:
@@ -75,8 +101,29 @@ def print_emails(emails):
         for email in sorted(email_list):
             print(f"  - {email}")
 
+def print_login_pages(login_pages):
+    if not login_pages:
+        print("No login pages found.")
+        return
+
+    print(f"\nTotal unique login pages found: {len(login_pages)}\n")
+    for page in sorted(login_pages):
+        print(f"  - {page}")
+
 # Main execution
-url = "url" # Enter the URL you want to scrape
-max_depth = 6  # You can adjust this value to control how deep the scraper goes
-result = scrape_email_from_website(url, max_depth)
-print_emails(result)
+if __name__ == "__main__":
+    url = input("Please enter the URL to scrape: ")
+    
+    while True:
+        try:
+            max_depth = int(input("Enter the maximum depth for scraping (1-5): "))
+            if 1 <= max_depth <= 5:
+                break
+            else:
+                print("Please enter a number between 1 and 5.")
+        except ValueError:
+            print("Please enter a valid integer.")
+
+    emails, login_pages = scrape_email_and_login_from_website(url, max_depth)
+    print_emails(emails)
+    print_login_pages(login_pages)
