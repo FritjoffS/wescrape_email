@@ -136,6 +136,6 @@ def print_emails(emails):
 
 
 # Main execution
-url = "https://jarnia.se/"
+url = "url_to_scrape"
 result = scrape_email_from_website(url)
 print_emails(result)
